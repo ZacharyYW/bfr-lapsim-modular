@@ -1,7 +1,6 @@
-from .car import Car
-from .ggv import GGV
-from .track import Track
-
+from models.car import Car
+from models.ggv import GGV
+from models.track import Track
 
 class Simulate:
     def __init__(self) -> None:

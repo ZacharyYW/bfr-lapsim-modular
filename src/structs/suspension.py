@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Suspension:
-    mass: float = 268.0
+    mass: float = 288.0
     cg_height: float = 0.303
     trackwidth: float = 1.245
     wheelbase: float = 1.53

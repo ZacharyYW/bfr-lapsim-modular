@@ -1,4 +1,4 @@
-# lapsim
+# BFR LapSim Modular
 
 A modular Python implementation of the BFR lapsim architecture.
 
