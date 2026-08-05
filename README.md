@@ -11,4 +11,3 @@ A modular Python implementation of the BFR lapsim architecture.
 - `src/lapsim/ggv.py` — GGV envelope representation
 - `src/lapsim/track.py` — track geometry loader
 - `src/lapsim/simulate.py` — orchestration layer
-- `src/lapsim/transient_sim.py` — optional time-domain solver
