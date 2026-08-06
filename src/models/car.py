@@ -4,6 +4,7 @@ from structs.aero import Aero
 from structs.engine import Engine
 from structs.suspension import Suspension
 from structs.direction import Direction
+from structs.tire import Tire
 
 from utils.constants import AIR_DENSITY, G, TIRE_RADIUS
 from collections import defaultdict
@@ -15,18 +16,23 @@ class Car:
     sus_params: Suspension = field(default_factory=Suspension)
     aero_params: Aero = field(default_factory=Aero)
     engine_params: Engine = field(default_factory=Engine)
-    tire_params: dict | None = None
 
-    def __init__(self) -> None:
+    tire_params: Tire = field(default_factory=Tire)
+    tire_load_params: dict[str, float] = field(init=False)
+
+    def __post_init__(self) -> None:
         front_axle_load = self.sus_params.mass * self.sus_params.weight_dist_front
-        rear_axle_load = self.sus_params * (1 - self.sus_params.weight_dist_front)
+        rear_axle_load = self.sus_params.mass * (1 - self.sus_params.weight_dist_front)
 
-        self.tire_params = {
+        self.tire_load_params = {
             "FO": front_axle_load / 2,
             "FI": front_axle_load / 2,
             "RO": rear_axle_load / 2,
             "RI": rear_axle_load / 2 
         }
+
+        tire_coeffs_path = input("Enter the path to the tire coefficients")
+        self.tire_params.load_coefficients(tire_coeffs_path)
 
     def load_transfer(self, lat_accel: float, long_accel: float, vel: float) -> dict[str, float]:
         """Placeholder for wheel-load calculation."""
@@ -39,10 +45,10 @@ class Car:
         long_load_transfer = (self.sus_params.mass * long_accel * G) * (self.sus_params.cg_height) / self.sus_params.wheelbase
 
         return {
-            "FO" : self.tire_params["FO"] + lat_load_transfer + single_tire_downforce,
-            "FI" : self.tire_params["FI"] - lat_load_transfer + single_tire_downforce,
-            "RO" : self.tire_params["RO"] + long_load_transfer + single_tire_downforce,
-            "RI" : self.tire_params["RI"] - long_load_transfer + single_tire_downforce
+            "FO" : self.tire_load_params["FO"] + lat_load_transfer + single_tire_downforce,
+            "FI" : self.tire_load_params["FI"] - lat_load_transfer + single_tire_downforce,
+            "RO" : self.tire_load_params["RO"] + long_load_transfer + single_tire_downforce,
+            "RI" : self.tire_load_params["RI"] - long_load_transfer + single_tire_downforce
         }
     
 
@@ -63,7 +69,7 @@ class Car:
         # Pulls tire loads under steady-state cornering
         tire_loads = self.load_transfer(lat_accel_guess, 0.0, velocity)
 
-        # TODO: Use these values (for slip anlges) to compare against telemetry data
+        # NOTE: Use these values (for slip anlges) to compare against telemetry data
         front_roll_grad = self.sus_params.front_roll_stiffness
         rear_roll_grad = (1 - self.sus_params.lateral_load_transfer_dist) / (self.sus_params.lateral_load_transfer_dist * front_roll_grad)
 

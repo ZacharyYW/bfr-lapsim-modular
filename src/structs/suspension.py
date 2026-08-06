@@ -11,6 +11,3 @@ class Suspension:
     lateral_load_transfer_dist: float = 0.5
     front_roll_stiffness: float = 40000.0
     pitch_stiffness: float = 0.0
-
-    # TODO: Tyre related stuff can go in "tire.py" ==> Camber gain curves in roll + heave, static camber value, static toe value, toe angle gain curve
-    camber_gain: float = 0.0
