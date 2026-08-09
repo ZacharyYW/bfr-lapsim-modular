@@ -1,6 +1,8 @@
 import numpy as np
+import pprint
 from scipy.io import loadmat
 from scipy.optimize import minimize_scalar
+from pathlib import Path
 
 G = 9.81  # m/s^2
 
@@ -24,10 +26,15 @@ INITIAL_LAT_ACCEL = 1.5
 INITIAL_LONG_ACCEL = 1.2
 INITIAL_BRAKE_ACCEL = 1.2
 
-CONVERGENCE_TOL = 0.05
+CONVERGENCE_TOL = 0.005
 
-PACEJKA_LONG_COEFFS_PATH = "..."
-PACEJKA_LAT_COEFFS_PATH = "..."
+PACEJKA_BRAKE_COEFFS_PATH = Path("../data/coeffs/hoosier_r20_tire_params_brake.mat").expanduser().resolve()
+PACEJKA_LONG_COEFFS_PATH = Path("../data/coeffs/hoosier_r20_tire_params_long.mat").expanduser().resolve()
+PACEJKA_LAT_COEFFS_PATH = Path("../data/coeffs/hoosier_r20_tire_params_lat.mat").expanduser().resolve()
+
+# For typical SA and SR values
+LAT_ACCEL_SA = 5
+LONG_ACCEL_SR = 0.15
 
 _long_coeffs = None
 _lat_coeffs = None
@@ -36,17 +43,16 @@ _lat_coeffs = None
 def load_pacejka_lat_coeffs():
     global _lat_coeffs
     mat = loadmat(PACEJKA_LAT_COEFFS_PATH)
-    # TODO: confirm this key against your actual .mat structure
-    # (e.g. print(mat.keys()) once to check the real field name)
-    _lat_coeffs = np.asarray(mat["a"]).flatten()  # expects a0..a13
+
+    _lat_coeffs = np.asarray(mat["coeffs"]).flatten()  # expects a0..a13
     return _lat_coeffs
 
 
 def load_pacejka_long_coeffs():
     global _long_coeffs
     mat = loadmat(PACEJKA_LONG_COEFFS_PATH)
-    # TODO: confirm this key against your actual .mat structure
-    _long_coeffs = np.asarray(mat["b"]).flatten()  # expects b0..b13
+
+    _long_coeffs = np.asarray(mat["coeffs"]).flatten()  # expects b0..b13
     return _long_coeffs
 
 
@@ -82,7 +88,9 @@ def _max_long_fx(Fz, b, kappa_bounds=(0.001, 0.4)):
     )
     kappa_opt = result.x
     fx_max = -result.fun
-    return fx_max, kappa_opt
+    # return fx_max, kappa_opt
+
+    return _pacejka_fx(LONG_ACCEL_SR, Fz, b), LONG_ACCEL_SR
 
 
 def _pacejka_fy(alpha, Fz, a, gamma=CAMBER):
@@ -105,23 +113,29 @@ def _pacejka_fy(alpha, Fz, a, gamma=CAMBER):
     return Fy
 
 # alpha_bounds_deg indicates that slip angle is bounded between 0.5 and 15.0
-def _max_lat_fy(Fz, a, alpha_bounds_deg=(0.5, 15.0)):
+def _max_lat_fy(Fz, a, alpha_bounds_deg=(-15.0, -0.5)):
     """
     Traction-limited peak: numerically find the slip angle that
     maximizes |Fy| at a given Fz, return (Fy_max, alpha_opt_rad).
     """
-    lo, hi = np.radians(alpha_bounds_deg[0]), np.radians(alpha_bounds_deg[1])
+    # lo, hi = np.radians(alpha_bounds_deg[0]), np.radians(alpha_bounds_deg[1])
+    # for angle in range
+    lo = alpha_bounds_deg[0]
+    hi = alpha_bounds_deg[1]
+
     result = minimize_scalar(
         lambda al: -_pacejka_fy(al, Fz, a),
         bounds=(lo, hi),
         method="bounded",
     )
+
     alpha_opt = result.x
     fy_max = -result.fun
 
     # fy_max : represents the max value, in N
     # alpha_out : represents the slip angle of the max value, in radians
-    return fy_max, alpha_opt
+    # return fy_max, alpha_opt
+    return _pacejka_fy(LAT_ACCEL_SA, Fz, a), LAT_ACCEL_SA
 
 
 def _calculate_swd(wd):
@@ -228,6 +242,12 @@ def _calculate_long_accel(long_accel_guess, swd_loads):
 
     return new_long_accel
 
+def scale_long_accels():
+    max_long_accel_even_dist = WD_LONG_ACCEL_OUTPUTS[0.5]
+    long_accel_scaling_factor = INITIAL_LONG_ACCEL / max_long_accel_even_dist
+
+    for wd in WD_LONG_ACCEL_OUTPUTS:
+        WD_LONG_ACCEL_OUTPUTS[wd] *= long_accel_scaling_factor
 
 # ---------------------------------------------------------------------
 # Braking — traction-limited, fixed 0.7/0.3 bias
@@ -284,14 +304,22 @@ def _calculate_brake_accel(brake_accel_guess, swd_loads):
 
     return new_brake_accel
 
+def scale_lat_accels():
+    max_lat_accel_even_dist = WD_LAT_ACCEL_OUTPUTS[0.5]
+    lat_accel_scaling_factor = INITIAL_LAT_ACCEL / max_lat_accel_even_dist
+
+    for wd in WD_LAT_ACCEL_OUTPUTS:
+        WD_LAT_ACCEL_OUTPUTS[wd] *= lat_accel_scaling_factor
 
 if __name__ == "__main__":
     load_pacejka_lat_coeffs()
     load_pacejka_long_coeffs()
 
     generate_long_accels()
-    generate_brake_accels()
-    generate_lat_accels()  # once track width is available
+    scale_long_accels()
 
-    print(WD_LONG_ACCEL_OUTPUTS)
-    print(WD_BRAKE_ACCEL_OUTPUTS)
+    generate_lat_accels()
+    scale_lat_accels()
+
+    pprint.pprint(WD_LONG_ACCEL_OUTPUTS, width=40)
+    pprint.pprint(WD_LAT_ACCEL_OUTPUTS, width=40)

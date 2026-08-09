@@ -12,7 +12,8 @@ TYRE_DATA_PATH = Path("../../data/tyres/RunData_DriveBrake_Matlab_SI_Round9").ex
 TIRE_ID_SUBSTRINGS = ["43100", "18.0x6.0", "7 inch rim"]
 
 FZ_MIN, FZ_MAX = 100.0, 1300.0   # [N] valid load window
-SR_MAX = 0.15                     # [-] valid slip ratio window (unitless, not degrees)
+SR_MAX = 0                     # [-] valid slip ratio window (unitless, not degrees)
+SR_MIN = -0.2
 PRESSURE_TARGET = 83.0           # [kPa]
 PRESSURE_TOL = 5.0               # [kPa]
 DECIMATE = 3                     # keep every Nth sample after filtering
@@ -75,8 +76,8 @@ def load_data():
 
     valid = (
         (FZ_pos > FZ_MIN) & (FZ_pos < FZ_MAX)
-        & (np.abs(SR_all) < SR_MAX)
-        & (SR_all >= 0)
+        & (SR_all > SR_MIN)
+        & (SR_all <= 0)
         & (np.abs(P_all - PRESSURE_TARGET) < PRESSURE_TOL)
     )
 
@@ -92,16 +93,16 @@ def load_data():
     return _data_cache
 
 
-def _mf_longitudinal(p, kappa, Fz):
+def _mf_brake(p, kappa, Fz):
     """
-    Pacejka BNP 1989 pure longitudinal slip magic formula.
+    Pacejka BNP 1989 pure brake slip magic formula.
     kappa is slip ratio [-] (unitless, matches SR_MAX convention above —
     no radians/degrees ambiguity here, unlike the lateral model).
     Fz in N.
 
     Note: this formula only uses b0-b12 (13 of the 14 coefficients).
     b13 is carried for array-shape parity with the lateral model's .mat
-    convention but is unused in the standard BNP89 longitudinal form —
+    convention but is unused in the standard BNP89 brake form —
     it's hardcoded to 0 in generate_coeffs() below rather than fit.
     """
     b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13 = p
@@ -134,7 +135,7 @@ def generate_coeffs(n_starts=8, seed=0):
     fz_bin_tol = 55.0
     fzc, dpk = [], []
     for fz in fz_bin_centers:
-        sel = (np.abs(FZ - fz) < fz_bin_tol) & (np.abs(SR) > 0.1) & (np.abs(IA) < 0.6)
+        sel = (np.abs(FZ - fz) < fz_bin_tol) & (np.abs(SR) > 0.14) & (np.abs(IA) < 0.6)
         if sel.sum() > 40:
             v = np.sort(np.abs(FX[sel]))
             fzc.append(fz)
@@ -197,7 +198,7 @@ def generate_coeffs(n_starts=8, seed=0):
 
     def residuals(free):
         p = expand(free)
-        model = _mf_longitudinal(p, SR, FZ)
+        model = _mf_brake(p, SR, FZ)
         return (FX - model) / FZ
 
     #        b0    b6     b7    b8    b9   b10   b11   b12
@@ -226,7 +227,7 @@ def generate_coeffs(n_starts=8, seed=0):
             best_free = result.x
 
     p_fit = expand(best_free)
-    rms_err = np.sqrt(np.mean((FX - _mf_longitudinal(p_fit, SR, FZ)) ** 2))
+    rms_err = np.sqrt(np.mean((FX - _mf_brake(p_fit, SR, FZ)) ** 2))
     print(f"\nbest normalized cost = {best_cost:.5f}")
     print(f"fit complete — rms error: {rms_err:.2f} N\n")
 
@@ -236,15 +237,15 @@ def generate_coeffs(n_starts=8, seed=0):
     for name, val in zip(coeff_names, p_fit):
         print(f"  {name:<14} = {val:12.6f}")
 
-    savemat(Path("../../data/coeffs/hoosier_r20_tire_params_long.mat").expanduser().resolve(), {
+    savemat(Path("../../data/coeffs/hoosier_r20_tire_params_brake.mat").expanduser().resolve(), {
         "coeffs": p_fit,
         "coeff_names": coeff_names,
         "rms_error_N": rms_err,
         "tire": "Hoosier 43100 18.0x6.0-10 R20",
         "source": "FSAE TTC Round 9, Calspan Tire Research Facility",
-        "model": "Pacejka BNP 1989 Longitudinal",
+        "model": "Pacejka BNP 1989 Brake",
     })
-    print("\ntire parameters saved to hoosier_r20_tire_params_long.mat")
+    print("\ntire parameters saved to hoosier_r20_tire_params_brake.mat")
 
     _coeffs_cache = p_fit
     return p_fit
@@ -252,7 +253,7 @@ def generate_coeffs(n_starts=8, seed=0):
 
 def plot_fx_vs_sr(fn_buckets):
     """
-    Longitudinal force vs slip ratio, one curve per Fz bucket in fn_buckets [N].
+    Brake force vs slip ratio, one curve per Fz bucket in fn_buckets [N].
     Model curves overlaid on measured scatter near each bucket.
     """
     data = load_data()
@@ -273,25 +274,25 @@ def plot_fx_vs_sr(fn_buckets):
 
         ax.scatter(SR[idx], FX[idx], s=5, color=cmap(k), alpha=0.20)
 
-        fx_pred = _mf_longitudinal(p_fit, sr_vec, fz * np.ones_like(sr_vec))
+        fx_pred = _mf_brake(p_fit, sr_vec, fz * np.ones_like(sr_vec))
         ax.plot(sr_vec, fx_pred, color=cmap(k), linewidth=2, label=f"F_Z = {fz:g} N")
 
     ax.axhline(0, linestyle="--", color="k", alpha=0.25)
     ax.axvline(0, linestyle="--", color="k", alpha=0.25)
     ax.set_xlabel("slip ratio  κ  [-]")
-    ax.set_ylabel("longitudinal force  F_X  [N]")
-    ax.set_title("longitudinal force vs slip ratio (lines = model, dots = measured)")
+    ax.set_ylabel("brake force  F_X  [N]")
+    ax.set_title("brake force vs slip ratio (lines = model, dots = measured)")
     ax.legend(loc="best")
     ax.grid(True)
     plt.tight_layout()
-    fig.savefig(Path(f"../../figures/tyres/Fx vs SR (long).png").expanduser().resolve(), dpi=150)
+    fig.savefig(Path(f"../../figures/tyres/Fx vs SR (Brake).png").expanduser().resolve(), dpi=150)
     plt.close(fig)
 
 
 def plot_fx_vs_fn(sr_buckets):
     """
-    Longitudinal force vs normal force, one curve per slip ratio in sr_buckets [-].
-    Model-only continuous Fz sweep — direct visualization of longitudinal
+    Brake force vs normal force, one curve per slip ratio in sr_buckets [-].
+    Model-only continuous Fz sweep — direct visualization of brake
     load sensitivity (sub-linear rise of Fx with Fz).
     """
     p_fit = generate_coeffs()
@@ -301,16 +302,16 @@ def plot_fx_vs_fn(sr_buckets):
 
     fig, ax = plt.subplots(figsize=(9, 6))
     for k, sr in enumerate(sr_buckets):
-        fx_pred = np.abs(_mf_longitudinal(p_fit, sr * np.ones_like(fz_vec), fz_vec))
+        fx_pred = np.abs(_mf_brake(p_fit, sr * np.ones_like(fz_vec), fz_vec))
         ax.plot(fz_vec, fx_pred, color=cmap(k), linewidth=2, label=f"κ = {sr:g}")
 
     ax.set_xlabel("normal force  F_Z  [N]")
-    ax.set_ylabel("longitudinal force  |F_X|  [N]")
-    ax.set_title("longitudinal force vs normal force — load sensitivity")
+    ax.set_ylabel("brake force  |F_X|  [N]")
+    ax.set_title("brake force vs normal force — load sensitivity")
     ax.legend(loc="best")
     ax.grid(True)
     plt.tight_layout()
-    fig.savefig(Path(f"../../figures/tyres/Fx vs Fn (long).png").expanduser().resolve(), dpi=150)
+    fig.savefig(Path(f"../../figures/tyres/Fx vs Fn (Brake).png").expanduser().resolve(), dpi=150)
     plt.close(fig)
 
 
