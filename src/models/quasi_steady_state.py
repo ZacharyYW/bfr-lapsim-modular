@@ -1,8 +1,8 @@
-from models.car import Car
-from models.ggv import GGV
-from models.track import Track
+from structs.car import Car
+from structs.ggv import GGV
+from structs.track import EnduranceTrack, AutocrossTrack, SkidpadTrack
 
-class Simulate:
+class QuasiSteadyStateModel:
     def __init__(self) -> None:
         self.car = Car()
         self.ggv = GGV()
@@ -26,3 +26,5 @@ class Simulate:
         self.build_ggv()
         self.load_track(path)
         return self.car, self.ggv, self.track
+
+if __name__ == "__main__":

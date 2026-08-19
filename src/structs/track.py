@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class Track:
+class AutocrossTrack:
     lengths: list[float] = field(default_factory=list)
     curvatures: list[float] = field(default_factory=list)
 
@@ -17,3 +17,14 @@ class Track:
                 if len(parts) >= 2:
                     self.lengths.append(float(parts[0]))
                     self.curvatures.append(float(parts[1]))
+
+@dataclass
+class EnduranceTrack:
+    lengths: list[float] = field(default_factory=list)
+    curvatures: list[float] = field(default_factory=list)
+
+
+@dataclass
+class SKidpadTrack:
+    inner_radius: float = 7.625
+    outer_radius: float = 9.125
