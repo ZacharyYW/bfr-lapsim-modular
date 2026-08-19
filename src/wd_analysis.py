@@ -3,6 +3,9 @@ import pprint
 from scipy.io import loadmat
 from scipy.optimize import minimize_scalar
 from pathlib import Path
+from tyres.pacejka_model_lat import pacejka_lat_force
+from tyres.pacejka_model_long import pacejka_long_force
+from tyres.pacejka_model_brake import pacejka_brake_force
 
 G = 9.81  # m/s^2
 
@@ -15,25 +18,25 @@ BRAKE_BIAS_FRONT = 0.70   # fraction of total braking force carried by front axl
 TRACK_WIDTH = 1.245  # m, front == rear
 CAMBER = 0.0         # rad — set nonzero if you want camber effects included
 
-WD_FRONT_CHOICES = [0.52, 0.5, 0.48, 0.46, 0.44, 0.42]
+WD_FRONT_CHOICES = [0.52, 0.51, 0.5, 0.49, 0.48, 0.47, 0.46, 0.45, 0.44, 0.43, 0.42]
 WD_LAT_ACCEL_OUTPUTS = dict()
 WD_LONG_ACCEL_OUTPUTS = dict()
 WD_BRAKE_ACCEL_OUTPUTS = dict()
 
 # For weight distribution of around 0.48/0.5
-INITIAL_WD_FRONT = 0.48
+INITIAL_WD_FRONT = 0.50
 INITIAL_LAT_ACCEL = 1.5
 INITIAL_LONG_ACCEL = 1.2
 INITIAL_BRAKE_ACCEL = 1.2
 
 CONVERGENCE_TOL = 0.005
 
-PACEJKA_BRAKE_COEFFS_PATH = Path("../data/coeffs/hoosier_r20_tire_params_brake.mat").expanduser().resolve()
-PACEJKA_LONG_COEFFS_PATH = Path("../data/coeffs/hoosier_r20_tire_params_long.mat").expanduser().resolve()
-PACEJKA_LAT_COEFFS_PATH = Path("../data/coeffs/hoosier_r20_tire_params_lat.mat").expanduser().resolve()
+PACEJKA_BRAKE_COEFFS_PATH = Path("../data/coeffs/brake/[B2356run73] hoosier_r20_tire_params_brake.mat").expanduser().resolve()
+PACEJKA_LONG_COEFFS_PATH = Path("../data/coeffs/longitudinal/[B2356run73] hoosier_r20_tire_params_long.mat").expanduser().resolve()
+PACEJKA_LAT_COEFFS_PATH = Path("../data/coeffs/lateral/[B2356run9] hoosier_r20_tire_params_lat.mat").expanduser().resolve()
 
 # For typical SA and SR values
-LAT_ACCEL_SA = 5
+LAT_ACCEL_SA = 2.75
 LONG_ACCEL_SR = 0.15
 
 _long_coeffs = None
@@ -56,86 +59,12 @@ def load_pacejka_long_coeffs():
     return _long_coeffs
 
 
-def _pacejka_fx(kappa, Fz, b):
-    """
-    Pacejka '89 (BNP) pure longitudinal slip model.
-    Fz in N, kappa as a ratio (not %).
-    """
-    b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13 = b
+def load_pacejka_brake_coeffs():
+    global _brake_coeffs
+    mat = loadmat(PACEJKA_BRAKE_COEFFS_PATH)
 
-    C = b0
-    D = Fz * (b1 * Fz + b2)
-    BCD = (b3 * Fz**2 + b4 * Fz) * np.exp(-b5 * Fz)
-    B = BCD / (C * D) if C * D != 0 else 0.0
-    E = b6 * Fz**2 + b7 * Fz + b8
-    Sh = b9 * Fz + b10
-    Sv = b11 * Fz + b12  # some BNP variants set this to 0; adjust if yours does
-
-    kx = kappa + Sh
-    Fx = D * np.sin(C * np.arctan(B * kx - E * (B * kx - np.arctan(B * kx)))) + Sv
-    return Fx
-
-
-def _max_long_fx(Fz, b, kappa_bounds=(0.001, 0.4)):
-    """
-    Traction-limited peak: numerically find the slip ratio that
-    maximizes |Fx| at a given Fz, return (Fx_max, kappa_opt).
-    """
-    result = minimize_scalar(
-        lambda k: -_pacejka_fx(k, Fz, b),
-        bounds=kappa_bounds,
-        method="bounded",
-    )
-    kappa_opt = result.x
-    fx_max = -result.fun
-    # return fx_max, kappa_opt
-
-    return _pacejka_fx(LONG_ACCEL_SR, Fz, b), LONG_ACCEL_SR
-
-
-def _pacejka_fy(alpha, Fz, a, gamma=CAMBER):
-    """
-    Pacejka '89 (BNP) pure lateral slip model.
-    Fz in N, alpha in radians, gamma (camber) in radians.
-    """
-    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13 = a
-
-    C = a0
-    D = Fz * (a1 * Fz + a2)
-    BCD = a3 * np.sin(2 * np.arctan(Fz / a4)) * (1 - a5 * abs(gamma))
-    B = BCD / (C * D) if C * D != 0 else 0.0
-    E = a6 * Fz + a7
-    Sh = a8 * gamma + a9 * Fz + a10
-    Sv = a11 * Fz * gamma + a12 * Fz + a13
-
-    ax = alpha + Sh
-    Fy = D * np.sin(C * np.arctan(B * ax - E * (B * ax - np.arctan(B * ax)))) + Sv
-    return Fy
-
-# alpha_bounds_deg indicates that slip angle is bounded between 0.5 and 15.0
-def _max_lat_fy(Fz, a, alpha_bounds_deg=(-15.0, -0.5)):
-    """
-    Traction-limited peak: numerically find the slip angle that
-    maximizes |Fy| at a given Fz, return (Fy_max, alpha_opt_rad).
-    """
-    # lo, hi = np.radians(alpha_bounds_deg[0]), np.radians(alpha_bounds_deg[1])
-    # for angle in range
-    lo = alpha_bounds_deg[0]
-    hi = alpha_bounds_deg[1]
-
-    result = minimize_scalar(
-        lambda al: -_pacejka_fy(al, Fz, a),
-        bounds=(lo, hi),
-        method="bounded",
-    )
-
-    alpha_opt = result.x
-    fy_max = -result.fun
-
-    # fy_max : represents the max value, in N
-    # alpha_out : represents the slip angle of the max value, in radians
-    # return fy_max, alpha_opt
-    return _pacejka_fy(LAT_ACCEL_SA, Fz, a), LAT_ACCEL_SA
+    _brake_coeffs = np.asarray(mat["coeffs"]).flatten()  # expects b0..b13
+    return _brake_coeffs
 
 
 def _calculate_swd(wd):
@@ -169,7 +98,7 @@ def generate_lat_accels():
         WD_LAT_ACCEL_OUTPUTS[curr_wd] = next_lat_accel_guess
 
 
-def _calculate_lat_accel(lat_accel_guess, swd_loads):
+def _calculate_lat_accel(lat_accel_guess, swd_loads, slip_angle=LAT_ACCEL_SA):
     """
     lat_accel_guess is in g's. Cornering transfers load from inner
     to outer wheels on BOTH axles (front and rear both engage,
@@ -190,16 +119,22 @@ def _calculate_lat_accel(lat_accel_guess, swd_loads):
     fi_load = max(fi_load, 0.0)
     ri_load = max(ri_load, 0.0)
 
-    fy_fo, _ = _max_lat_fy(fo_load, _lat_coeffs)
-    fy_fi, _ = _max_lat_fy(fi_load, _lat_coeffs)
-    fy_ro, _ = _max_lat_fy(ro_load, _lat_coeffs)
-    fy_ri, _ = _max_lat_fy(ri_load, _lat_coeffs)
+    fy_fo = pacejka_lat_force(_lat_coeffs, slip_angle, fo_load)
+    fy_fi = pacejka_lat_force(_lat_coeffs, slip_angle, fi_load)
+    fy_ro = pacejka_lat_force(_lat_coeffs, slip_angle, ro_load)
+    fy_ri = pacejka_lat_force(_lat_coeffs, slip_angle, ri_load)
 
     total_lateral_force = fy_fo + fy_fi + fy_ro + fy_ri
     new_lat_accel = total_lateral_force / (TOTAL_CAR_MASS * G)  # back to g's
 
     return new_lat_accel
 
+def scale_lat_accels():
+    max_lat_accel_even_dist = WD_LAT_ACCEL_OUTPUTS[INITIAL_WD_FRONT]
+    lat_accel_scaling_factor = INITIAL_LAT_ACCEL / max_lat_accel_even_dist
+
+    for wd in WD_LAT_ACCEL_OUTPUTS:
+        WD_LAT_ACCEL_OUTPUTS[wd] *= lat_accel_scaling_factor
 
 # ---------------------------------------------------------------------
 # Longitudinal — traction-limited, RWD
@@ -234,8 +169,8 @@ def _calculate_long_accel(long_accel_guess, swd_loads):
     # assume even left/right split (no lateral component in pure long accel)
     rear_corner_load = rear_axle_dynamic / 2
 
-    fx_ro, _ = _max_long_fx(rear_corner_load, _long_coeffs)
-    fx_ri, _ = _max_long_fx(rear_corner_load, _long_coeffs)
+    fx_ro = pacejka_long_force(_long_coeffs, LONG_ACCEL_SR, rear_corner_load)
+    fx_ri = pacejka_long_force(_long_coeffs, LONG_ACCEL_SR, rear_corner_load)
 
     total_tractive_force = fx_ro + fx_ri
     new_long_accel = total_tractive_force / (TOTAL_CAR_MASS * G)  # back to g's
@@ -243,7 +178,7 @@ def _calculate_long_accel(long_accel_guess, swd_loads):
     return new_long_accel
 
 def scale_long_accels():
-    max_long_accel_even_dist = WD_LONG_ACCEL_OUTPUTS[0.5]
+    max_long_accel_even_dist = WD_LONG_ACCEL_OUTPUTS[INITIAL_WD_FRONT]
     long_accel_scaling_factor = INITIAL_LONG_ACCEL / max_long_accel_even_dist
 
     for wd in WD_LONG_ACCEL_OUTPUTS:
@@ -286,10 +221,10 @@ def _calculate_brake_accel(brake_accel_guess, swd_loads):
     front_corner_load = front_axle_dynamic / 2
     rear_corner_load = rear_axle_dynamic / 2
 
-    fx_fo, _ = _max_long_fx(front_corner_load, _long_coeffs)
-    fx_fi, _ = _max_long_fx(front_corner_load, _long_coeffs)
-    fx_ro, _ = _max_long_fx(rear_corner_load, _long_coeffs)
-    fx_ri, _ = _max_long_fx(rear_corner_load, _long_coeffs)
+    fx_fo = pacejka_brake_force( _long_coeffs, front_corner_load, LONG_ACCEL_SR,)
+    fx_fi = pacejka_brake_force( _long_coeffs, front_corner_load, LONG_ACCEL_SR)
+    fx_ro = pacejka_brake_force( _long_coeffs, rear_corner_load, LONG_ACCEL_SR)
+    fx_ri = pacejka_brake_force( _long_coeffs, rear_corner_load, LONG_ACCEL_SR)
 
     max_front_force = fx_fo + fx_fi
     max_rear_force = fx_ro + fx_ri
@@ -304,16 +239,52 @@ def _calculate_brake_accel(brake_accel_guess, swd_loads):
 
     return new_brake_accel
 
-def scale_lat_accels():
-    max_lat_accel_even_dist = WD_LAT_ACCEL_OUTPUTS[0.5]
-    lat_accel_scaling_factor = INITIAL_LAT_ACCEL / max_lat_accel_even_dist
+def scale_brake_accels():
+    max_brake_accel_even_dist = WD_BRAKE_ACCEL_OUTPUTS[INITIAL_WD_FRONT]
+    brake_accel_scaling_factor = INITIAL_BRAKE_ACCEL / max_brake_accel_even_dist
 
-    for wd in WD_LAT_ACCEL_OUTPUTS:
-        WD_LAT_ACCEL_OUTPUTS[wd] *= lat_accel_scaling_factor
+    for wd in WD_BRAKE_ACCEL_OUTPUTS:
+        WD_BRAKE_ACCEL_OUTPUTS[wd] *= brake_accel_scaling_factor
+
+# ---------- 
+
+def calculate_tire_scaling_factor():
+    selected_corner_radii = [17.2, 12.5, 24.3]
+    selected_lat_accel = [1.5, 1.3, 1.5] # In g's
+
+    even_wd_loads = _calculate_swd(0.5)
+
+    for idx in range(len(selected_corner_radii)):
+        curr_radii = selected_corner_radii[idx]
+        curr_lat_accel = selected_lat_accel[idx]
+
+        slip_angle = 12
+        curr_yaw_moment = -1
+        diff = -1
+
+        final_lat_accel = -1
+
+        while diff == -1 or diff > 0.025:
+            calculated_lat_accel = _calculate_lat_accel(curr_lat_accel, even_wd_loads, slip_angle)
+
+            final_lat_accel = calculated_lat_accel
+            diff = abs(abs(calculated_lat_accel) - abs(curr_lat_accel))
+
+            slip_angle -= 0.25
+
+        print("Converged steady-state slip angle: ", slip_angle)
+        print("converged lat accel: ", final_lat_accel)
+
+
+
+
 
 if __name__ == "__main__":
     load_pacejka_lat_coeffs()
     load_pacejka_long_coeffs()
+    load_pacejka_brake_coeffs()
+
+    calculate_tire_scaling_factor()
 
     generate_long_accels()
     scale_long_accels()
@@ -321,5 +292,9 @@ if __name__ == "__main__":
     generate_lat_accels()
     scale_lat_accels()
 
+    generate_brake_accels()
+    scale_brake_accels()
+
     pprint.pprint(WD_LONG_ACCEL_OUTPUTS, width=40)
     pprint.pprint(WD_LAT_ACCEL_OUTPUTS, width=40)
+    pprint.pprint(WD_BRAKE_ACCEL_OUTPUTS, width=40)
