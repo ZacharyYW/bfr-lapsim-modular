@@ -198,6 +198,8 @@ if __name__ == "__main__":
     skidpad_time = 5.6
     skidpad_radius = 8.3975
     V = (2 * math.pi * skidpad_radius) / skidpad_time
+
+    # TODO: Set this with actual value
     V = 13.9
 
     ymd = YMD()
