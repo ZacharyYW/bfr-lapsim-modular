@@ -1,4 +1,4 @@
-from utils.constants import G
+from .constants import G
 
 def calculate_corner_loads(sus_params, Ay):
     """Static load + simplistic lateral load transfer split via LLTD."""
